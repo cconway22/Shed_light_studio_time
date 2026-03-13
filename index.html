@@ -207,17 +207,23 @@
 
                 // Request Spreadsheet creation from Apps Script
                 try {
+                    // Using text/plain for the body to avoid CORS OPTIONS pre-flight checks
+                    // which Google Apps Script doesn't support well.
                     const response = await fetch(GOOGLE_SCRIPT_URL, {
                         method: "POST",
+                        headers: { 'Content-Type': 'text/plain' },
                         body: JSON.stringify({
                             action: "createProject",
                             projectName: name
                         })
                     });
+                    
+                    // Note: If CORS is still an issue, the request likely still succeeded on Google's end.
+                    // If the browser allows the read, we extract the ID.
                     const result = await response.json();
                     sheetId = result.spreadsheetId;
                 } catch (err) {
-                    console.warn("Sheet creation backgrounded or failed. Sending anyway.");
+                    console.warn("Sheet request sent. If ID is missing, check Apps Script deployment permissions.");
                 }
 
                 const newProject = {
@@ -267,6 +273,7 @@
                     try {
                         fetch(GOOGLE_SCRIPT_URL, {
                             method: "POST",
+                            headers: { 'Content-Type': 'text/plain' },
                             body: JSON.stringify({
                                 action: "logTime",
                                 spreadsheetId: activeProject.spreadsheetId,
