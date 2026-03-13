@@ -1,548 +1,501 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  collection, 
-  addDoc, 
-  onSnapshot, 
-  doc, 
-  updateDoc, 
-  query, 
-  orderBy,
-  getDoc,
-  setDoc,
-  serverTimestamp 
-} from 'firebase/firestore';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  signInWithCustomToken, 
-  onAuthStateChanged 
-} from 'firebase/auth';
-import { 
-  Clock, 
-  Plus, 
-  Camera, 
-  ChevronLeft, 
-  Play, 
-  Pause, 
-  CheckCircle2, 
-  Calendar,
-  Trash2,
-  TrendingUp,
-  History,
-  DollarSign,
-  Wallet,
-  Settings2,
-  Save
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SLS Time - Stained Glass Tracker</title>
+    <!-- Tailwind CSS for Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React and ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX Support in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div id="root"></div>
 
-// --- Firebase Configuration ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'stained-glass-timer-v2';
+    <!-- Added data-type="module" to fix the "require is not defined" error -->
+    <script type="text/babel" data-type="module">
+        // --- 1. FIREBASE IMPORTS (Must be at the top) ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
-const PHASES = [
-  "Design & Patterning",
-  "Glass Selection & Cutting",
-  "Grinding & Fitting",
-  "Copper Foiling",
-  "Soldering",
-  "Cleaning & Patina",
-  "Framing & Installation"
-];
+        const { useState, useEffect, useRef } = React;
 
-// Custom Logo Component based on uploaded image
-const SLSLogo = ({ className = "w-8 h-8" }) => (
-  <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
-    {/* Outer Frame */}
-    <path d="M50 5 L95 28 V95 H5 V28 L50 5Z" fill="white" stroke="black" strokeWidth="4" strokeLinejoin="round"/>
-    
-    {/* Light Segments */}
-    <path d="M50 5 L95 28 L50 45 L5 28 L50 5Z" fill="#888" stroke="black" strokeWidth="2"/>
-    <path d="M5 28 L50 45 L5 65 V28Z" fill="#BBB" stroke="black" strokeWidth="2"/>
-    <path d="M95 28 L50 45 L95 65 V28Z" fill="#BBB" stroke="black" strokeWidth="2"/>
-    <path d="M5 65 L50 45 L50 95 H5 V65Z" fill="#EEE" stroke="black" strokeWidth="2"/>
-    <path d="M95 65 L50 45 L50 95 H95 V65Z" fill="#EEE" stroke="black" strokeWidth="2"/>
-    
-    {/* Center Vertical Line */}
-    <line x1="50" y1="5" x2="50" y2="45" stroke="black" strokeWidth="4" />
-    
-    {/* The Lamp */}
-    <path d="M35 45 A15 15 0 0 1 65 45 Z" fill="black" />
-    <circle cx="50" cy="48" r="8" fill="white" stroke="black" strokeWidth="2" />
-  </svg>
-);
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [projects, setProjects] = useState([]);
-  const [currentView, setCurrentView] = useState('dashboard');
-  const [activeProject, setActiveProject] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [activeTimer, setActiveTimer] = useState(null);
-  const [timeLogs, setTimeLogs] = useState([]);
-  const [uploading, setUploading] = useState(false);
-  const [showRateEditor, setShowRateEditor] = useState(false);
-
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const timerRef = useRef(null);
-
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth error:", err);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    const q = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const projs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setProjects(projs);
-      if (activeProject) {
-        const updated = projs.find(p => p.id === activeProject.id);
-        if (updated) setActiveProject(updated);
-      }
-    }, (err) => console.error("Firestore Projects Error:", err));
-    return () => unsubscribe();
-  }, [user, activeProject?.id]);
-
-  useEffect(() => {
-    if (activeTimer) {
-      timerRef.current = setInterval(() => {
-        const now = Date.now();
-        setElapsedTime(Math.floor((now - activeTimer.startTime) / 1000));
-      }, 1000);
-    } else {
-      clearInterval(timerRef.current);
-      setElapsedTime(0);
-    }
-    return () => clearInterval(timerRef.current);
-  }, [activeTimer]);
-
-  useEffect(() => {
-    if (!user || !activeProject) return;
-    const q = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allLogs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const projectLogs = allLogs
-        .filter(log => log.projectId === activeProject.id)
-        .sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-      setTimeLogs(projectLogs);
-    }, (err) => console.error("Firestore Logs Error:", err));
-    return () => unsubscribe();
-  }, [user, activeProject?.id]);
-
-  const handleCreateProject = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const defaultRate = parseFloat(formData.get('rate')) || 0;
-    const phaseRates = {};
-    PHASES.forEach(phase => { phaseRates[phase] = defaultRate; });
-    const newProject = {
-      name: formData.get('name'),
-      client: formData.get('client'),
-      hourlyRate: defaultRate,
-      phaseRates: phaseRates,
-      status: 'In Progress',
-      createdAt: serverTimestamp(),
-    };
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'projects'), newProject);
-      setCurrentView('dashboard');
-    } catch (err) { console.error("Add Project Error:", err); }
-  };
-
-  const updatePhaseRate = async (phase, newRate) => {
-    if (!activeProject) return;
-    const updatedRates = { ...activeProject.phaseRates, [phase]: parseFloat(newRate) || 0 };
-    try {
-      const projectRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects', activeProject.id);
-      await updateDoc(projectRef, { phaseRates: updatedRates });
-    } catch (err) { console.error("Update Rate Error:", err); }
-  };
-
-  const startTimer = (phase) => {
-    setActiveTimer({ startTime: Date.now(), phase, projectId: activeProject.id });
-  };
-
-  const stopTimer = async () => {
-    if (!activeTimer) return;
-    const durationSeconds = Math.floor((Date.now() - activeTimer.startTime) / 1000);
-    const log = {
-      projectId: activeTimer.projectId,
-      phase: activeTimer.phase,
-      duration: durationSeconds,
-      timestamp: serverTimestamp(),
-      type: 'time'
-    };
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), log);
-      setActiveTimer(null);
-    } catch (err) { console.error("Stop Timer Error:", err); }
-  };
-
-  const handlePhotoUpload = async (e, phaseOverride = null) => {
-    const file = e.target.files[0];
-    if (!file || !activeProject) return;
-    setUploading(true);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = async () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800;
-        const MAX_HEIGHT = 800;
-        let width = img.width;
-        let height = img.height;
-        if (width > height) {
-          if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-        } else {
-          if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        const base64String = canvas.toDataURL('image/jpeg', 0.7);
-        const photoLog = {
-          projectId: activeProject.id,
-          imageUrl: base64String,
-          timestamp: serverTimestamp(),
-          type: 'photo',
-          phase: phaseOverride || (activeTimer ? activeTimer.phase : 'General Progress'),
-          note: 'Progress photo'
+        // --- 2. YOUR ACTUAL CONFIG ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDmB57IdqYwmR7vb6hlJMNBTjDPuvDZt3E",
+            authDomain: "shed-light-studio-time.firebaseapp.com",
+            projectId: "shed-light-studio-time",
+            storageBucket: "shed-light-studio-time.firebasestorage.app",
+            messagingSenderId: "683241113812",
+            appId: "1:683241113812:web:9f6e054359ac6f10de9341",
+            measurementId: "G-5JZWKBLNYP"
         };
-        try {
-          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), photoLog);
-        } catch (err) { console.error("Photo Log Error:", err); }
-        finally { setUploading(false); }
-      };
-      img.src = event.target.result;
-    };
-    reader.readAsDataURL(file);
-  };
 
-  const formatTime = (seconds) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    const hStr = h > 0 ? `${h}h ` : '';
-    const mStr = `${m}m`;
-    const sStr = h === 0 ? ` ${s}s` : ''; 
-    return `${hStr}${mStr}${sStr}`;
-  };
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = 'sls-time-production';
 
-  const getStats = (logs, project = activeProject) => {
-    if (!project) return { displayTime: '0m', earned: '$0.00', totalSeconds: 0 };
-    const timeLogs = logs.filter(l => l.type === 'time');
-    const totalSeconds = timeLogs.reduce((acc, log) => acc + (log.duration || 0), 0);
-    const earnedTotal = timeLogs.reduce((acc, log) => {
-      const rate = (project.phaseRates?.[log.phase]) ?? project.hourlyRate ?? 0;
-      const hours = (log.duration || 0) / 3600;
-      return acc + (hours * rate);
-    }, 0);
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    return {
-      displayTime: `${h > 0 ? h + 'h ' : ''}${m}m`,
-      earned: earnedTotal.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
-      totalSeconds
-    };
-  };
+        const PHASES = [
+            "Design & Patterning",
+            "Glass Selection & Cutting",
+            "Grinding & Fitting",
+            "Copper Foiling",
+            "Soldering",
+            "Cleaning & Patina",
+            "Framing & Installation"
+        ];
 
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center h-screen bg-indigo-50 gap-4">
-      <SLSLogo className="w-24 h-24 animate-pulse" />
-      <span className="font-black text-indigo-600 tracking-widest uppercase text-xs">Loading SLS Time...</span>
-    </div>
-  );
+        // --- COMPONENTS ---
+        const SLSLogo = ({ className = "w-8 h-8" }) => (
+            <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M50 5 L95 28 V95 H5 V28 L50 5Z" fill="white" stroke="black" strokeWidth="4" strokeLinejoin="round"/>
+                <path d="M50 5 L95 28 L50 45 L5 28 L50 5Z" fill="#888" stroke="black" strokeWidth="2"/>
+                <path d="M5 28 L50 45 L5 65 V28Z" fill="#BBB" stroke="black" strokeWidth="2"/>
+                <path d="M95 28 L50 45 L95 65 V28Z" fill="#BBB" stroke="black" strokeWidth="2"/>
+                <path d="M5 65 L50 45 L50 95 H5 V65Z" fill="#EEE" stroke="black" strokeWidth="2"/>
+                <path d="M95 65 L50 45 L50 95 H95 V65Z" fill="#EEE" stroke="black" strokeWidth="2"/>
+                <line x1="50" y1="5" x2="50" y2="45" stroke="black" strokeWidth="4" />
+                <path d="M35 45 A15 15 0 0 1 65 45 Z" fill="black" />
+                <circle cx="50" cy="48" r="8" fill="white" stroke="black" strokeWidth="2" />
+            </svg>
+        );
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-20">
-      <header className="bg-white text-slate-900 p-4 sticky top-0 z-10 shadow-sm border-b border-slate-200">
-        <div className="max-w-4xl mx-auto flex justify-between items-center">
-          <h1 className="text-xl font-black flex items-center gap-3 tracking-tighter">
-            <SLSLogo className="w-8 h-8" /> SLS Time
-          </h1>
-          {uploading && (
-            <div className="bg-emerald-500 text-white text-[10px] px-2 py-1 rounded animate-pulse font-black uppercase">
-              Saving...
-            </div>
-          )}
-        </div>
-      </header>
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const icons = {
+                clock: <path d="M12 6v6l4 2" />,
+                plus: <path d="M12 5v14M5 12h14" />,
+                camera: (
+                    <React.Fragment>
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                    </React.Fragment>
+                ),
+                left: <path d="M15 18l-6-6 6-6" />,
+                pause: (
+                    <React.Fragment>
+                        <rect x="6" y="4" width="4" height="16"/>
+                        <rect x="14" y="4" width="4" height="16"/>
+                    </React.Fragment>
+                ),
+                wallet: (
+                    <React.Fragment>
+                        <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/>
+                        <path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/>
+                        <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"/>
+                    </React.Fragment>
+                ),
+                settings: (
+                    <React.Fragment>
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </React.Fragment>
+                ),
+                trash: <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2m-6 5v6m4-6v6"/>
+            };
+            return (
+                <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                    {icons[name]}
+                </svg>
+            );
+        };
 
-      <main className="max-w-4xl mx-auto p-4">
-        {currentView === 'dashboard' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-black text-slate-800">Projects</h2>
-              <button 
-                onClick={() => setCurrentView('add_project')}
-                className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl flex items-center gap-2 shadow-lg hover:bg-indigo-700 transition active:scale-95"
-              >
-                <Plus size={20} /> Create New
-              </button>
-            </div>
+        function App() {
+            const [user, setUser] = useState(null);
+            const [projects, setProjects] = useState([]);
+            const [currentView, setCurrentView] = useState('dashboard');
+            const [activeProject, setActiveProject] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [activeTimer, setActiveTimer] = useState(null);
+            const [timeLogs, setTimeLogs] = useState([]);
+            const [uploading, setUploading] = useState(false);
+            const [showRateEditor, setShowRateEditor] = useState(false);
+            const [elapsedTime, setElapsedTime] = useState(0);
+            const [deletingProjectId, setDeletingProjectId] = useState(null);
+            const timerRef = useRef(null);
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {projects.length === 0 ? (
-                <div className="col-span-full py-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center gap-4">
-                  <SLSLogo className="w-16 h-16 opacity-20 grayscale" />
-                  <p className="text-slate-400 font-medium">No projects yet. Add your first commission!</p>
+            useEffect(() => {
+                const initAuth = async () => {
+                    try { await signInAnonymously(auth); } 
+                    catch (err) { console.error("Auth error:", err); }
+                };
+                initAuth();
+                const unsubscribe = onAuthStateChanged(auth, (u) => {
+                    setUser(u);
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            useEffect(() => {
+                if (!user) return;
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const projs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setProjects(projs);
+                    if (activeProject) {
+                        const updated = projs.find(p => p.id === activeProject.id);
+                        if (updated) setActiveProject(updated);
+                        else {
+                            setActiveProject(null);
+                            setCurrentView('dashboard');
+                        }
+                    }
+                });
+                return () => unsubscribe();
+            }, [user, activeProject?.id]);
+
+            useEffect(() => {
+                if (!user || !activeProject) return;
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const allLogs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    const projectLogs = allLogs
+                        .filter(log => log.projectId === activeProject.id)
+                        .sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                    setTimeLogs(projectLogs);
+                });
+                return () => unsubscribe();
+            }, [user, activeProject?.id]);
+
+            useEffect(() => {
+                if (activeTimer) {
+                    timerRef.current = setInterval(() => {
+                        setElapsedTime(Math.floor((Date.now() - activeTimer.startTime) / 1000));
+                    }, 1000);
+                } else {
+                    clearInterval(timerRef.current);
+                    setElapsedTime(0);
+                }
+                return () => clearInterval(timerRef.current);
+            }, [activeTimer]);
+
+            const handleCreateProject = async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                const defaultRate = parseFloat(formData.get('rate')) || 0;
+                const phaseRates = {};
+                PHASES.forEach(p => { phaseRates[p] = defaultRate; });
+                const newProject = {
+                    name: formData.get('name'),
+                    client: formData.get('client'),
+                    hourlyRate: defaultRate,
+                    phaseRates: phaseRates,
+                    status: 'In Progress',
+                    createdAt: serverTimestamp(),
+                };
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'projects'), newProject);
+                setCurrentView('dashboard');
+            };
+
+            const handleDeleteProject = async (projectId) => {
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', projectId));
+                    setDeletingProjectId(null);
+                    if (activeProject?.id === projectId) {
+                        setActiveProject(null);
+                        setCurrentView('dashboard');
+                    }
+                } catch (err) {
+                    console.error("Delete Project Error:", err);
+                }
+            };
+
+            const startTimer = (phase) => {
+                setActiveTimer({ startTime: Date.now(), phase, projectId: activeProject.id });
+            };
+
+            const stopTimer = async () => {
+                if (!activeTimer) return;
+                const durationSeconds = Math.floor((Date.now() - activeTimer.startTime) / 1000);
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), {
+                    projectId: activeTimer.projectId,
+                    phase: activeTimer.phase,
+                    duration: durationSeconds,
+                    timestamp: serverTimestamp(),
+                    type: 'time'
+                });
+                setActiveTimer(null);
+            };
+
+            const handlePhotoUpload = async (e, phaseOverride = null) => {
+                const file = e.target.files[0];
+                if (!file || !activeProject) return;
+                setUploading(true);
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = async () => {
+                        const canvas = document.createElement('canvas');
+                        const MAX = 800;
+                        let w = img.width, h = img.height;
+                        if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+                        else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+                        canvas.width = w; canvas.height = h;
+                        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), {
+                            projectId: activeProject.id,
+                            imageUrl: canvas.toDataURL('image/jpeg', 0.7),
+                            timestamp: serverTimestamp(),
+                            type: 'photo',
+                            phase: phaseOverride || (activeTimer ? activeTimer.phase : 'General Progress')
+                        });
+                        setUploading(false);
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            };
+
+            const formatTime = (seconds) => {
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = seconds % 60;
+                return `${h > 0 ? h + 'h ' : ''}${m}m${h === 0 ? ' ' + s + 's' : ''}`;
+            };
+
+            const getStats = (logs, proj = activeProject) => {
+                if (!proj) return { displayTime: '0m', earned: '$0.00' };
+                const tLogs = logs.filter(l => l.type === 'time');
+                const totalSeconds = tLogs.reduce((acc, l) => acc + (l.duration || 0), 0);
+                const earned = tLogs.reduce((acc, l) => {
+                    const rate = proj.phaseRates?.[l.phase] ?? proj.hourlyRate ?? 0;
+                    return acc + ((l.duration / 3600) * rate);
+                }, 0);
+                const h = Math.floor(totalSeconds / 3600), m = Math.floor((totalSeconds % 3600) / 60);
+                return {
+                    displayTime: `${h > 0 ? h + 'h ' : ''}${m}m`,
+                    earned: earned.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+                };
+            };
+
+            if (loading) return (
+                <div className="flex flex-col items-center justify-center h-screen bg-indigo-50 gap-4">
+                    <SLSLogo className="w-24 h-24 animate-pulse" />
+                    <span className="font-black text-indigo-600 tracking-widest uppercase text-xs">Loading SLS Time...</span>
                 </div>
-              ) : (
-                projects.map(project => {
-                  const projectLogs = timeLogs.filter(l => l.projectId === project.id);
-                  const stats = getStats(projectLogs, project);
-                  return (
-                    <div 
-                      key={project.id}
-                      onClick={() => {
-                        setActiveProject(project);
-                        setCurrentView('project_detail');
-                      }}
-                      className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 cursor-pointer hover:border-indigo-200 transition-all active:bg-indigo-50 group"
-                    >
-                      <div className="flex justify-between items-start mb-4">
-                        <h3 className="font-black text-xl text-slate-800 group-hover:text-indigo-600">{project.name}</h3>
-                        <span className="bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase px-2 py-1 rounded-lg">
-                          {project.status}
-                        </span>
-                      </div>
-                      <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-6">{project.client}</p>
-                      
-                      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-50">
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Total Time</p>
-                          <p className="font-black text-slate-700 flex items-center gap-1">
-                            <Clock size={14} className="text-indigo-500" /> {stats.displayTime}
-                          </p>
+            );
+
+            return (
+                <div className="min-h-screen pb-20">
+                    {/* Deletion Confirmation Modal */}
+                    {deletingProjectId && (
+                        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center">
+                                <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <Icon name="trash" size={32} />
+                                </div>
+                                <h3 className="text-xl font-black text-slate-800 mb-2">Delete Project?</h3>
+                                <p className="text-slate-500 text-sm mb-6">This action cannot be undone. All recorded hours and photos for this project will be removed from your dashboard.</p>
+                                <div className="flex gap-3">
+                                    <button 
+                                        onClick={() => setDeletingProjectId(null)}
+                                        className="flex-1 px-4 py-3 rounded-2xl font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition"
+                                    >
+                                        Keep It
+                                    </button>
+                                    <button 
+                                        onClick={() => handleDeleteProject(deletingProjectId)}
+                                        className="flex-1 px-4 py-3 rounded-2xl font-bold bg-rose-500 text-white hover:bg-rose-600 transition"
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Value Earned</p>
-                          <p className="font-black text-emerald-600 flex items-center gap-1">
-                            <Wallet size={14} /> {stats.earned}
-                          </p>
+                    )}
+
+                    <header className="bg-white p-4 sticky top-0 z-10 shadow-sm border-b border-slate-200">
+                        <div className="max-w-4xl mx-auto flex justify-between items-center">
+                            <h1 className="text-xl font-black flex items-center gap-3 tracking-tighter">
+                                <SLSLogo className="w-8 h-8" /> SLS Time
+                            </h1>
+                            {uploading && <div className="bg-emerald-500 text-white text-[10px] px-2 py-1 rounded animate-pulse font-black uppercase">Saving...</div>}
                         </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        )}
+                    </header>
 
-        {currentView === 'add_project' && (
-          <div className="bg-white p-8 rounded-3xl shadow-sm max-w-lg mx-auto border border-slate-100">
-            <button onClick={() => setCurrentView('dashboard')} className="mb-6 text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition font-bold">
-              <ChevronLeft size={20} /> Cancel
-            </button>
-            <h2 className="text-3xl font-black text-slate-800 mb-8">New Commission</h2>
-            <form onSubmit={handleCreateProject} className="space-y-6">
-              <div>
-                <label className="block text-xs font-black uppercase text-slate-400 mb-2">Project Name</label>
-                <input name="name" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-bold" placeholder="e.g. Garden Panel" />
-              </div>
-              <div>
-                <label className="block text-xs font-black uppercase text-slate-400 mb-2">Client</label>
-                <input name="client" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-bold" placeholder="e.g. Mary Jane" />
-              </div>
-              <div>
-                <label className="block text-xs font-black uppercase text-slate-400 mb-2">Base Hourly Rate ($)</label>
-                <input name="rate" type="number" step="0.01" defaultValue="45.00" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-black" />
-              </div>
-              <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-xl hover:bg-indigo-700 transition transform active:scale-95">
-                Start Tracking in SLS Time
-              </button>
-            </form>
-          </div>
-        )}
-
-        {currentView === 'project_detail' && activeProject && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <button onClick={() => setCurrentView('dashboard')} className="text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition font-bold">
-                <ChevronLeft size={20} /> Dashboard
-              </button>
-              <button 
-                onClick={() => setShowRateEditor(!showRateEditor)}
-                className={`p-2 rounded-xl transition ${showRateEditor ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-50'}`}
-              >
-                <Settings2 size={20} />
-              </button>
-            </div>
-
-            {showRateEditor && (
-              <div className="bg-white p-6 rounded-3xl shadow-md border-2 border-indigo-100 animate-in slide-in-from-top-4 duration-300">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="font-black text-slate-800 flex items-center gap-2">
-                    <DollarSign size={18} className="text-indigo-500" /> Manage Task Rates
-                  </h3>
-                  <button onClick={() => setShowRateEditor(false)} className="text-[10px] font-black uppercase text-indigo-600">Done</button>
-                </div>
-                <div className="space-y-3">
-                  {PHASES.map(phase => (
-                    <div key={phase} className="flex items-center justify-between gap-4 p-2 bg-slate-50 rounded-2xl">
-                      <span className="text-xs font-bold text-slate-600 flex-1">{phase}</span>
-                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
-                        <span className="text-slate-400 text-xs font-bold">$</span>
-                        <input 
-                          type="number" 
-                          step="0.01"
-                          defaultValue={activeProject.phaseRates?.[phase] ?? activeProject.hourlyRate}
-                          onBlur={(e) => updatePhaseRate(phase, e.target.value)}
-                          className="w-16 text-right font-black text-slate-800 outline-none"
-                        />
-                        <span className="text-[10px] font-bold text-slate-400">/hr</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 overflow-hidden relative">
-              <div className="relative z-10 flex flex-col md:flex-row justify-between md:items-center gap-6">
-                <div>
-                  <h2 className="text-4xl font-black text-slate-800 leading-tight">{activeProject.name}</h2>
-                  <p className="text-slate-400 font-bold uppercase tracking-widest text-xs mt-1">{activeProject.client}</p>
-                </div>
-                <div className="flex gap-4">
-                  <div className="bg-indigo-50 px-6 py-4 rounded-2xl border border-indigo-100 min-w-[120px]">
-                    <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest mb-1">Total Time</p>
-                    <p className="text-2xl font-black text-indigo-700">{getStats(timeLogs).displayTime}</p>
-                  </div>
-                  <div className="bg-emerald-50 px-6 py-4 rounded-2xl border border-emerald-100 min-w-[120px]">
-                    <p className="text-[10px] font-black uppercase text-emerald-400 tracking-widest mb-1">Labor Value</p>
-                    <p className="text-2xl font-black text-emerald-700">{getStats(timeLogs).earned}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="absolute -top-4 -right-4 opacity-5 pointer-events-none">
-                <SLSLogo className="w-48 h-48" />
-              </div>
-            </div>
-
-            <div className="bg-slate-900 text-white p-8 rounded-3xl shadow-2xl relative">
-              {activeTimer ? (
-                <div className="flex flex-col items-center">
-                  <div className="flex items-center gap-2 bg-indigo-500/20 text-indigo-300 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] mb-4 border border-indigo-500/30">
-                    <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                    ACTIVE: {activeTimer.phase}
-                  </div>
-                  <div className="text-7xl font-mono font-black tracking-tighter mb-10 tabular-nums">
-                    {formatTime(elapsedTime)}
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
-                    <label className="bg-white/10 hover:bg-white/20 p-4 rounded-2xl font-black flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 border border-white/5">
-                      <Camera size={24} /> Snap
-                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(e)} />
-                    </label>
-                    <button 
-                      onClick={stopTimer}
-                      className="bg-rose-500 hover:bg-rose-600 p-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl transition transform active:scale-95"
-                    >
-                      <Pause fill="currentColor" size={24} /> Stop
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  <div className="col-span-full mb-4">
-                    <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest">Punch in for a Task</h3>
-                  </div>
-                  {PHASES.map(phase => (
-                    <button 
-                      key={phase}
-                      onClick={() => startTimer(phase)}
-                      className="bg-white/5 hover:bg-indigo-600 p-4 rounded-2xl text-left transition border border-white/10 group flex flex-col gap-1"
-                    >
-                      <span className="text-[10px] font-black uppercase tracking-tighter text-slate-500 group-hover:text-white/70">${activeProject.phaseRates?.[phase] ?? activeProject.hourlyRate}/hr</span>
-                      <span className="text-xs font-black uppercase tracking-tight leading-tight group-hover:text-white">{phase}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex justify-between items-center px-2">
-                <h3 className="text-xl font-black text-slate-800">Timeline</h3>
-                {!activeTimer && (
-                  <label className="text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-black uppercase cursor-pointer hover:bg-emerald-100 transition border border-emerald-100">
-                    <Camera size={16} /> Add Photo
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(e, "Snapshot")} />
-                  </label>
-                )}
-              </div>
-
-              <div className="space-y-4">
-                {timeLogs.map(log => (
-                  <div key={log.id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex gap-6 items-start">
-                    <div className={`p-3 rounded-2xl shrink-0 ${log.type === 'photo' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>
-                      {log.type === 'photo' ? <Camera size={24} /> : <Clock size={24} />}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <p className="font-black text-slate-800 text-lg">
-                            {log.type === 'photo' ? `Progress: ${log.phase}` : log.phase}
-                          </p>
-                          <div className="flex items-center gap-2">
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                              {log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Syncing...'}
-                            </p>
-                            {log.type === 'time' && (
-                              <span className="text-[10px] font-black text-slate-300">
-                                @ ${(activeProject.phaseRates?.[log.phase]) ?? activeProject.hourlyRate}/hr
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        {log.type === 'time' && (
-                          <div className="bg-slate-900 text-white px-4 py-1 rounded-full text-xs font-black tabular-nums">
-                            +{formatTime(log.duration)}
-                          </div>
+                    <main className="max-w-4xl mx-auto p-4">
+                        {currentView === 'dashboard' && (
+                            <div className="space-y-6">
+                                <div className="flex justify-between items-center">
+                                    <h2 className="text-2xl font-black text-slate-800">Projects</h2>
+                                    <button onClick={() => setCurrentView('add_project')} className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl flex items-center gap-2 shadow-lg hover:bg-indigo-700 transition active:scale-95"><Icon name="plus" /> Create New</button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {projects.length === 0 ? (
+                                        <div className="col-span-full py-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center gap-4">
+                                            <SLSLogo className="w-16 h-16 opacity-20 grayscale" />
+                                            <p className="text-slate-400 font-medium">No projects yet. Add your first commission!</p>
+                                        </div>
+                                    ) : (
+                                        projects.map(p => {
+                                            const stats = getStats(timeLogs.filter(l => l.projectId === p.id), p);
+                                            return (
+                                                <div key={p.id} className="relative group">
+                                                    <div onClick={() => { setActiveProject(p); setCurrentView('project_detail'); }} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 cursor-pointer hover:border-indigo-200 transition-all active:bg-indigo-50 group">
+                                                        <div className="flex justify-between items-start mb-4">
+                                                            <h3 className="font-black text-xl text-slate-800 group-hover:text-indigo-600 pr-8 truncate">{p.name}</h3>
+                                                            <span className="bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase px-2 py-1 rounded-lg shrink-0">{p.status}</span>
+                                                        </div>
+                                                        <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-6 truncate">{p.client}</p>
+                                                        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-50">
+                                                            <div><p className="text-[10px] font-bold text-slate-400 uppercase">Time</p><p className="font-black text-slate-700 flex items-center gap-1"><Icon name="clock" size={14} className="text-indigo-500" /> {stats.displayTime}</p></div>
+                                                            <div><p className="text-[10px] font-bold text-slate-400 uppercase">Earned</p><p className="font-black text-emerald-600 flex items-center gap-1"><Icon name="wallet" size={14} /> {stats.earned}</p></div>
+                                                        </div>
+                                                    </div>
+                                                    {/* Delete Button on Dashboard Card */}
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setDeletingProjectId(p.id);
+                                                        }}
+                                                        className="absolute top-4 right-4 p-2 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                                                        title="Delete Project"
+                                                    >
+                                                        <Icon name="trash" size={18} />
+                                                    </button>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
                         )}
-                      </div>
-                      {log.imageUrl && (
-                        <div className="mt-4 rounded-2xl overflow-hidden border border-slate-100 shadow-inner">
-                          <img src={log.imageUrl} alt="Progress" className="w-full h-auto max-h-[500px] object-cover" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
 
-      <div className="fixed bottom-6 right-6 flex items-center gap-2 bg-slate-900/95 backdrop-blur-lg text-[9px] text-white font-black uppercase tracking-[0.2em] px-4 py-2 rounded-2xl shadow-2xl z-50">
-        <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></div>
-        Studio Sync Active
-      </div>
-    </div>
-  );
-}
+                        {currentView === 'add_project' && (
+                            <div className="bg-white p-8 rounded-3xl shadow-sm max-w-lg mx-auto border border-slate-100">
+                                <button onClick={() => setCurrentView('dashboard')} className="mb-6 text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition font-bold"><Icon name="left" /> Cancel</button>
+                                <h2 className="text-3xl font-black text-slate-800 mb-8">New Commission</h2>
+                                <form onSubmit={handleCreateProject} className="space-y-6">
+                                    <div><label className="block text-xs font-black uppercase text-slate-400 mb-2">Project Name</label><input name="name" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-bold" /></div>
+                                    <div><label className="block text-xs font-black uppercase text-slate-400 mb-2">Client</label><input name="client" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-bold" /></div>
+                                    <div><label className="block text-xs font-black uppercase text-slate-400 mb-2">Base Hourly Rate ($)</label><input name="rate" type="number" step="0.01" defaultValue="45.00" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-black" /></div>
+                                    <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-xl hover:bg-indigo-700 transition transform active:scale-95">Start Tracking</button>
+                                </form>
+                            </div>
+                        )}
+
+                        {currentView === 'project_detail' && activeProject && (
+                            <div className="space-y-6">
+                                <div className="flex justify-between items-center">
+                                    <button onClick={() => setCurrentView('dashboard')} className="text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition font-bold"><Icon name="left" /> Dashboard</button>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => setDeletingProjectId(activeProject.id)}
+                                            className="p-2 rounded-xl bg-white text-slate-400 border border-slate-200 hover:text-rose-500 hover:border-rose-100 transition"
+                                            title="Delete Project"
+                                        >
+                                            <Icon name="trash" size={20} />
+                                        </button>
+                                        <button onClick={() => setShowRateEditor(!showRateEditor)} className={`p-2 rounded-xl transition ${showRateEditor ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}><Icon name="settings" /></button>
+                                    </div>
+                                </div>
+
+                                {showRateEditor && (
+                                    <div className="bg-white p-6 rounded-3xl shadow-md border-2 border-indigo-100">
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2 mb-4">Manage Task Rates</h3>
+                                        <div className="space-y-3">
+                                            {PHASES.map(ph => (
+                                                <div key={ph} className="flex items-center justify-between gap-4 p-2 bg-slate-50 rounded-2xl">
+                                                    <span className="text-xs font-bold text-slate-600 flex-1">{ph}</span>
+                                                    <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
+                                                        <input type="number" step="0.01" defaultValue={activeProject.phaseRates?.[ph] ?? activeProject.hourlyRate} onBlur={async (e) => {
+                                                            const updated = { ...activeProject.phaseRates, [ph]: parseFloat(e.target.value) || 0 };
+                                                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', activeProject.id), { phaseRates: updated });
+                                                        }} className="w-16 text-right font-black text-slate-800 outline-none" />
+                                                        <span className="text-[10px] font-bold text-slate-400">/hr</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 relative overflow-hidden">
+                                    <div className="relative z-10 flex flex-col md:flex-row justify-between md:items-center gap-6">
+                                        <div><h2 className="text-4xl font-black text-slate-800 leading-tight">{activeProject.name}</h2><p className="text-slate-400 font-bold uppercase tracking-widest text-xs">{activeProject.client}</p></div>
+                                        <div className="flex gap-4">
+                                            <div className="bg-indigo-50 px-6 py-4 rounded-2xl border border-indigo-100 min-w-[120px]">
+                                                <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest mb-1">Time</p>
+                                                <p className="text-2xl font-black text-indigo-700">{getStats(timeLogs).displayTime}</p>
+                                            </div>
+                                            <div className="bg-emerald-50 px-6 py-4 rounded-2xl border border-emerald-100 min-w-[120px]">
+                                                <p className="text-[10px] font-black uppercase text-emerald-400 tracking-widest mb-1">Value</p>
+                                                <p className="text-2xl font-black text-emerald-700">{getStats(timeLogs).earned}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="absolute -top-4 -right-4 opacity-5 pointer-events-none"><SLSLogo className="w-48 h-48" /></div>
+                                </div>
+
+                                <div className="bg-slate-900 text-white p-8 rounded-3xl shadow-2xl relative">
+                                    {activeTimer ? (
+                                        <div className="flex flex-col items-center">
+                                            <div className="bg-indigo-500/20 text-indigo-300 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] mb-4 border border-indigo-500/30 animate-pulse">{activeTimer.phase}</div>
+                                            <div className="text-7xl font-mono font-black tracking-tighter mb-10 tabular-nums">{formatTime(elapsedTime)}</div>
+                                            <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
+                                                <label className="bg-white/10 hover:bg-white/20 p-4 rounded-2xl font-black flex items-center justify-center gap-2 cursor-pointer transition active:scale-95 border border-white/5"><Icon name="camera" size={24} /> Snap<input type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(e)} /></label>
+                                                <button onClick={stopTimer} className="bg-rose-500 hover:bg-rose-600 p-4 rounded-2xl font-black flex items-center justify-center gap-2 transition active:scale-95"><Icon name="pause" size={24} /> Stop</button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                            {PHASES.map(ph => (
+                                                <button key={ph} onClick={() => startTimer(ph)} className="bg-white/5 hover:bg-indigo-600 p-4 rounded-2xl text-left transition border border-white/10 group flex flex-col gap-1">
+                                                    <span className="text-[10px] font-black uppercase tracking-tighter text-slate-500 group-hover:text-white/70">${activeProject.phaseRates?.[ph] ?? activeProject.hourlyRate}/hr</span>
+                                                    <span className="text-xs font-black uppercase tracking-tight group-hover:text-white">{ph}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center px-2">
+                                        <h3 className="text-xl font-black text-slate-800">Timeline</h3>
+                                        {!activeTimer && <label className="text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-black uppercase cursor-pointer hover:bg-emerald-100 transition border border-emerald-100"><Icon name="camera" size={16} /> Add Photo<input type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(e, "Snapshot")} /></label>}
+                                    </div>
+                                    <div className="space-y-4">
+                                        {timeLogs.map(log => (
+                                            <div key={log.id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex gap-6 items-start">
+                                                <div className={`p-3 rounded-2xl shrink-0 ${log.type === 'photo' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}><Icon name={log.type === 'photo' ? 'camera' : 'clock'} size={24} /></div>
+                                                <div className="flex-1">
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <div>
+                                                            <p className="font-black text-slate-800 text-lg">{log.type === 'photo' ? `Progress: ${log.phase}` : log.phase}</p>
+                                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Saving...'}</p>
+                                                        </div>
+                                                        {log.type === 'time' && <div className="bg-slate-900 text-white px-4 py-1 rounded-full text-xs font-black tabular-nums">+{formatTime(log.duration)}</div>}
+                                                    </div>
+                                                    {log.imageUrl && <div className="mt-4 rounded-2xl overflow-hidden border border-slate-100 shadow-inner"><img src={log.imageUrl} alt="Progress" className="w-full h-auto max-h-[500px] object-cover" /></div>}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    <div className="fixed bottom-6 right-6 flex items-center gap-2 bg-slate-900/95 backdrop-blur-lg text-[9px] text-white font-black uppercase tracking-[0.2em] px-4 py-2 rounded-2xl shadow-2xl z-50">
+                        <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></div>
+                        Studio Sync Active
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
