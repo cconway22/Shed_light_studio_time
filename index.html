@@ -20,9 +20,8 @@
 <body class="bg-slate-50">
     <div id="root"></div>
 
-    <!-- Added data-type="module" to fix the "require is not defined" error -->
     <script type="text/babel" data-type="module">
-        // --- 1. FIREBASE IMPORTS (Must be at the top) ---
+        // --- 1. FIREBASE IMPORTS ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
@@ -40,8 +39,8 @@
             measurementId: "G-5JZWKBLNYP"
         };
 
-        // INTEGRATED GOOGLE APPS SCRIPT URL
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw3VMNt8S1fYVKeHkXsjWfUH_hzHEuWzEY2cdWEx6ss0dRQo_IKoEcgwUoZi_vnxbIp/exec";
+        // LATEST GOOGLE APPS SCRIPT URL
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxdZptyfZAeYPo85Vd4jK5ZsNcrfCUUHGsOt-RmDnWnjlIkmeTN1jNoocR5JpBILKwX/exec";
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -112,7 +111,8 @@
                         <line x1="16" y1="17" x2="8" y2="17"/>
                         <polyline points="10 9 9 9 8 9"/>
                     </React.Fragment>
-                )
+                ),
+                link: <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
             };
             return (
                 <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -134,6 +134,7 @@
             const [showRateEditor, setShowRateEditor] = useState(false);
             const [elapsedTime, setElapsedTime] = useState(0);
             const [deletingProjectId, setDeletingProjectId] = useState(null);
+            const [showLinkModal, setShowLinkModal] = useState(false);
             const timerRef = useRef(null);
 
             useEffect(() => {
@@ -192,6 +193,13 @@
                 return () => clearInterval(timerRef.current);
             }, [activeTimer]);
 
+            const formatTime = (seconds) => {
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = seconds % 60;
+                return `${h > 0 ? h + 'h ' : ''}${m}m${h === 0 ? ' ' + s + 's' : ''}`;
+            };
+
             const handleCreateProject = async (e) => {
                 e.preventDefault();
                 setSyncingSheet(true);
@@ -205,25 +213,24 @@
 
                 let sheetId = null;
 
-                // Request Spreadsheet creation from Apps Script
                 try {
-                    // Using text/plain for the body to avoid CORS OPTIONS pre-flight checks
-                    // which Google Apps Script doesn't support well.
+                    // Send creation request to Google
                     const response = await fetch(GOOGLE_SCRIPT_URL, {
                         method: "POST",
-                        headers: { 'Content-Type': 'text/plain' },
+                        headers: { "Content-Type": "text/plain" },
                         body: JSON.stringify({
                             action: "createProject",
                             projectName: name
-                        })
+                        }),
+                        redirect: "follow"
                     });
                     
-                    // Note: If CORS is still an issue, the request likely still succeeded on Google's end.
-                    // If the browser allows the read, we extract the ID.
-                    const result = await response.json();
-                    sheetId = result.spreadsheetId;
+                    if (response.ok) {
+                        const result = await response.json();
+                        sheetId = result.spreadsheetId;
+                    }
                 } catch (err) {
-                    console.warn("Sheet request sent. If ID is missing, check Apps Script deployment permissions.");
+                    console.warn("Sheet request sent, but could not read the ID automatically due to CORS.");
                 }
 
                 const newProject = {
@@ -239,6 +246,17 @@
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'projects'), newProject);
                 setSyncingSheet(false);
                 setCurrentView('dashboard');
+            };
+
+            const linkSheetManually = async (e) => {
+                e.preventDefault();
+                const id = e.target.sheetId.value.trim();
+                if (!id) return;
+                
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', activeProject.id), {
+                    spreadsheetId: id
+                });
+                setShowLinkModal(false);
             };
 
             const handleDeleteProject = async (projectId) => {
@@ -259,7 +277,7 @@
                 const rate = activeProject.phaseRates?.[phase] ?? activeProject.hourlyRate;
                 const earned = (durationSeconds / 3600) * rate;
 
-                // Save to Firestore
+                // 1. Save to Firestore
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), {
                     projectId: activeTimer.projectId,
                     phase,
@@ -268,21 +286,23 @@
                     type: 'time'
                 });
 
-                // Save to Google Sheets
+                // 2. Trigger Google Sheet log if a Spreadsheet is linked
                 if (activeProject.spreadsheetId) {
                     try {
+                        console.log("Pushing log to Google Sheet:", activeProject.spreadsheetId);
                         fetch(GOOGLE_SCRIPT_URL, {
                             method: "POST",
-                            headers: { 'Content-Type': 'text/plain' },
+                            headers: { "Content-Type": "text/plain" },
                             body: JSON.stringify({
                                 action: "logTime",
                                 spreadsheetId: activeProject.spreadsheetId,
                                 phase,
                                 durationSeconds,
                                 displayTime: formatTime(durationSeconds),
-                                rate,
-                                earned
-                            })
+                                rate: rate,
+                                earned: Number(earned.toFixed(2))
+                            }),
+                            mode: "no-cors" // Essential to bypass CORS for simple 'fire and forget' logging
                         });
                     } catch (err) { console.error("Sheet log failed:", err); }
                 }
@@ -319,13 +339,6 @@
                 reader.readAsDataURL(file);
             };
 
-            const formatTime = (seconds) => {
-                const h = Math.floor(seconds / 3600);
-                const m = Math.floor((seconds % 3600) / 60);
-                const s = seconds % 60;
-                return `${h > 0 ? h + 'h ' : ''}${m}m${h === 0 ? ' ' + s + 's' : ''}`;
-            };
-
             const getStats = (logs, proj = activeProject) => {
                 if (!proj) return { displayTime: '0m', earned: '$0.00' };
                 const tLogs = logs.filter(l => l.type === 'time');
@@ -350,6 +363,23 @@
 
             return (
                 <div className="min-h-screen pb-20">
+                    {/* Manual Link Modal */}
+                    {showLinkModal && (
+                        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full">
+                                <h3 className="text-xl font-black text-slate-800 mb-2">Link Google Sheet</h3>
+                                <p className="text-slate-500 text-xs mb-4">If the sheet was created but the app couldn't find it, paste the ID from the sheet's URL here.</p>
+                                <form onSubmit={linkSheetManually} className="space-y-4">
+                                    <input name="sheetId" placeholder="Paste Sheet ID here..." required className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                    <div className="flex gap-2">
+                                        <button type="button" onClick={() => setShowLinkModal(false)} className="flex-1 p-3 font-bold text-slate-400">Cancel</button>
+                                        <button type="submit" className="flex-1 p-3 font-bold bg-indigo-600 text-white rounded-xl">Save Link</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
                     {deletingProjectId && (
                         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center">
@@ -430,8 +460,10 @@
                                 <div className="flex justify-between items-center">
                                     <button onClick={() => setCurrentView('dashboard')} className="text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition font-bold"><Icon name="left" /> Dashboard</button>
                                     <div className="flex gap-2">
-                                        {activeProject.spreadsheetId && (
+                                        {activeProject.spreadsheetId ? (
                                             <a href={`https://docs.google.com/spreadsheets/d/${activeProject.spreadsheetId}`} target="_blank" rel="noopener noreferrer" className="p-2 rounded-xl bg-white text-emerald-600 border border-slate-200 hover:bg-emerald-50 transition" title="Open Spreadsheet"><Icon name="sheet" size={20} /></a>
+                                        ) : (
+                                            <button onClick={() => setShowLinkModal(true)} className="p-2 rounded-xl bg-white text-indigo-400 border border-slate-200 hover:text-indigo-600 transition" title="Link Sheet ID"><Icon name="link" size={20} /></button>
                                         )}
                                         <button onClick={() => setDeletingProjectId(activeProject.id)} className="p-2 rounded-xl bg-white text-slate-400 border border-slate-200 hover:text-rose-500 transition"><Icon name="trash" size={20} /></button>
                                         <button onClick={() => setShowRateEditor(!showRateEditor)} className={`p-2 rounded-xl transition ${showRateEditor ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}><Icon name="settings" /></button>
