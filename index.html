@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 
 // --- Configuration ---
+// These variables are provided by the Canvas internal environment
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -44,6 +45,7 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'stained-glass-timer-
 // Your Google Apps Script URL
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxdZptyfZAeYPo85Vd4jK5ZsNcrfCUUHGsOt-RmDnWnjlIkmeTN1jNoocR5JpBILKwX/exec";
 
+// Master Phase List - Alphabetical
 const PHASES = [
   "Cementing and waterproofing",
   "Cleaning & patina",
@@ -61,6 +63,7 @@ const PHASES = [
   "Watercolor"
 ].sort();
 
+// --- Components ---
 const SLSLogo = ({ className = "w-8 h-8" }) => (
   <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M50 5 L95 28 V95 H5 V28 L50 5Z" fill="white" stroke="black" strokeWidth="4" strokeLinejoin="round"/>
@@ -76,6 +79,7 @@ const SLSLogo = ({ className = "w-8 h-8" }) => (
 );
 
 export default function App() {
+  // --- State ---
   const [user, setUser] = useState(null);
   const [projects, setProjects] = useState([]);
   const [currentView, setCurrentView] = useState('dashboard');
@@ -96,6 +100,7 @@ export default function App() {
   const timerRef = useRef(null);
   const dropdownRef = useRef(null);
 
+  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -106,6 +111,7 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Authentication
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -124,6 +130,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Fetch Projects
   useEffect(() => {
     if (!user) return;
     const q = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
@@ -134,10 +141,11 @@ export default function App() {
         const updated = projs.find(p => p.id === activeProject.id);
         if (updated) setActiveProject(updated);
       }
-    });
+    }, (error) => console.error("Snapshot error:", error));
     return () => unsubscribe();
   }, [user, activeProject?.id]);
 
+  // Fetch Logs for Active Project
   useEffect(() => {
     if (!user || !activeProject) return;
     const q = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
@@ -147,10 +155,11 @@ export default function App() {
         .filter(log => log.projectId === activeProject.id)
         .sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
       setTimeLogs(projectLogs);
-    });
+    }, (error) => console.error("Logs fetch error:", error));
     return () => unsubscribe();
   }, [user, activeProject?.id]);
 
+  // Timer Logic
   useEffect(() => {
     if (activeTimer) {
       timerRef.current = setInterval(() => {
@@ -163,6 +172,47 @@ export default function App() {
     return () => clearInterval(timerRef.current);
   }, [activeTimer]);
 
+  // --- Helpers ---
+  const formatTime = (seconds) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h > 0 ? h + 'h ' : ''}${m}m${h === 0 ? ' ' + s + 's' : ''}`;
+  };
+
+  const calculateEarnedForLog = (log, proj) => {
+    if (log.type !== 'time' || !proj) return 0;
+    const rate = proj.phaseRates?.[log.phase] ?? proj.hourlyRate ?? 0;
+    return (log.duration / 3600) * rate;
+  };
+
+  const getStats = (logs, proj = activeProject) => {
+    if (!proj) return { displayTime: '0m', earned: '$0.00', materialCost: '$0.00', totalValue: '$0.00' };
+    
+    const tLogs = logs.filter(l => l.type === 'time');
+    const eLogs = logs.filter(l => l.type === 'expense');
+    
+    const totalSeconds = tLogs.reduce((acc, l) => acc + (l.duration || 0), 0);
+    const earned = tLogs.reduce((acc, l) => {
+      const rate = proj.phaseRates?.[l.phase] ?? proj.hourlyRate ?? 0;
+      return acc + ((l.duration / 3600) * rate);
+    }, 0);
+    
+    const materialCost = eLogs.reduce((acc, l) => acc + (l.amount || 0), 0);
+    const totalValue = earned + materialCost;
+
+    const h = Math.floor(totalSeconds / 3600), m = Math.floor((totalSeconds % 3600) / 60);
+    const format = (val) => val.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    
+    return {
+      displayTime: `${h > 0 ? h + 'h ' : ''}${m}m`,
+      earned: format(earned),
+      materialCost: format(materialCost),
+      totalValue: format(totalValue)
+    };
+  };
+
+  // --- Handlers ---
   const handleCreateProject = async (e) => {
     e.preventDefault();
     setSyncingSheet(true);
@@ -185,7 +235,7 @@ export default function App() {
         const result = await response.json();
         sheetId = result.spreadsheetId;
       }
-    } catch (err) { console.warn("Google Sheet ID not found automatically."); }
+    } catch (err) { console.warn("Google Sheet sync was backgrounded."); }
 
     const newProject = {
       name, client, hourlyRate: defaultRate, phaseRates,
@@ -255,7 +305,7 @@ export default function App() {
     setActiveTimer(null);
   };
 
-  const handlePhotoUpload = async (e, phaseOverride = null) => {
+  const handlePhotoUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || !activeProject) return;
     setUploading(true);
@@ -273,7 +323,7 @@ export default function App() {
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), {
           projectId: activeProject.id, imageUrl: canvas.toDataURL('image/jpeg', 0.7),
           timestamp: serverTimestamp(), type: 'photo',
-          phase: phaseOverride || (activeTimer ? activeTimer.phase : 'General Progress')
+          phase: activeTimer ? activeTimer.phase : 'Progress Photo'
         });
         setUploading(false);
       };
@@ -282,46 +332,12 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  const formatTime = (seconds) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h > 0 ? h + 'h ' : ''}${m}m${h === 0 ? ' ' + s + 's' : ''}`;
-  };
-
-  const getStats = (logs, proj = activeProject) => {
-    if (!proj) return { displayTime: '0m', earned: '$0.00', materialCost: '$0.00', totalValue: '$0.00' };
-    const tLogs = logs.filter(l => l.type === 'time');
-    const eLogs = logs.filter(l => l.type === 'expense');
-    const totalSeconds = tLogs.reduce((acc, l) => acc + (l.duration || 0), 0);
-    const earned = tLogs.reduce((acc, l) => {
-      const rate = proj.phaseRates?.[l.phase] ?? proj.hourlyRate ?? 0;
-      return acc + ((l.duration / 3600) * rate);
-    }, 0);
-    const materialCost = eLogs.reduce((acc, l) => acc + (l.amount || 0), 0);
-    const totalValue = earned + materialCost;
-    const h = Math.floor(totalSeconds / 3600), m = Math.floor((totalSeconds % 3600) / 60);
-    const format = (val) => val.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-    return {
-      displayTime: `${h > 0 ? h + 'h ' : ''}${m}m`,
-      earned: format(earned),
-      materialCost: format(materialCost),
-      totalValue: format(totalValue)
-    };
-  };
-
   const updatePhaseRate = async (phase, newRate) => {
     if (!activeProject) return;
     const updatedRates = { ...activeProject.phaseRates, [phase]: parseFloat(newRate) || 0 };
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', activeProject.id), {
       phaseRates: updatedRates
     });
-  };
-
-  const calculateEarnedForLog = (log, proj) => {
-    if (log.type !== 'time' || !proj) return 0;
-    const rate = proj.phaseRates?.[log.phase] ?? proj.hourlyRate ?? 0;
-    return (log.duration / 3600) * rate;
   };
 
   if (loading) return (
@@ -334,7 +350,8 @@ export default function App() {
   const filteredPhases = PHASES.filter(p => p.toLowerCase().includes(phaseSearch.toLowerCase()));
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-20">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-20 overflow-x-hidden">
+      {/* Delete Confirmation Modal */}
       {deletingProjectId && (
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center">
@@ -348,6 +365,7 @@ export default function App() {
         </div>
       )}
 
+      {/* Manual Sheet Link Modal */}
       {showLinkModal && (
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full">
@@ -368,7 +386,7 @@ export default function App() {
       )}
 
       <header className="bg-white p-4 sticky top-0 z-10 shadow-sm border-b border-slate-200">
-        <div className="max-w-4xl mx-auto flex justify-between items-center">
+        <div className="max-w-4xl mx-auto flex justify-between items-center px-2">
           <h1 className="text-xl font-black flex items-center gap-3 tracking-tighter"><SLSLogo className="w-8 h-8" /> SLS Time</h1>
           {(uploading || syncingSheet) && <div className="bg-emerald-500 text-white text-[10px] px-2 py-1 rounded animate-pulse font-black uppercase tracking-widest">Syncing...</div>}
         </div>
@@ -377,28 +395,43 @@ export default function App() {
       <main className="max-w-4xl mx-auto p-4">
         {currentView === 'dashboard' && (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center px-2">
               <h2 className="text-2xl font-black text-slate-800">Projects</h2>
               <button onClick={() => setCurrentView('add_project')} className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl flex items-center gap-2 shadow-lg hover:bg-indigo-700 transition active:scale-95"><Plus size={20} /> Create New</button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {projects.map(p => {
-                const pStats = getStats(timeLogs.filter(l => l.projectId === p.id), p);
-                return (
-                  <div key={p.id} className="relative group">
-                    <div onClick={() => { setActiveProject(p); setCurrentView('project_detail'); }} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 cursor-pointer hover:border-indigo-200 transition-all active:bg-indigo-50 flex flex-col h-full">
-                      <h3 className="font-black text-xl text-slate-800 pr-8 truncate mb-1">{p.name}</h3>
-                      <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-8">{p.client}</p>
-                      <div className="mt-auto grid grid-cols-2 gap-4 pt-4 border-t border-slate-50 relative">
-                        <div><p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Project Value</p><p className="font-black text-emerald-600 flex items-center gap-1 text-sm"><Wallet size={14} /> {pStats.totalValue}</p></div>
-                        <div><p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Time Tracked</p><p className="font-black text-slate-700 flex items-center gap-1 text-sm"><Clock size={14} className="text-indigo-500" /> {pStats.displayTime}</p></div>
-                        <div className="absolute -top-3 right-0"><span className="bg-slate-50 text-slate-500 text-[9px] font-black uppercase px-2 py-1 rounded-md border border-slate-100">{p.status}</span></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-2">
+              {projects.length === 0 ? (
+                <div className="col-span-full py-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center gap-4">
+                  <SLSLogo className="w-16 h-16 opacity-20 grayscale" />
+                  <p className="text-slate-400 font-medium font-bold uppercase tracking-tight text-xs">No active pieces</p>
+                </div>
+              ) : (
+                projects.map(p => {
+                  const pStats = getStats(timeLogs.filter(l => l.projectId === p.id), p);
+                  return (
+                    <div key={p.id} className="relative group">
+                      <div onClick={() => { setActiveProject(p); setCurrentView('project_detail'); }} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 cursor-pointer hover:border-indigo-200 transition-all active:bg-indigo-50 flex flex-col h-full">
+                        <h3 className="font-black text-xl text-slate-800 pr-8 truncate mb-1">{p.name}</h3>
+                        <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-8">{p.client}</p>
+                        <div className="mt-auto grid grid-cols-2 gap-4 pt-4 border-t border-slate-50 relative">
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Value</p>
+                            <p className="font-black text-emerald-600 flex items-center gap-1 text-sm"><Wallet size={14} /> {pStats.totalValue}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Time</p>
+                            <p className="font-black text-slate-700 flex items-center gap-1 text-sm"><Clock size={14} className="text-indigo-500" /> {pStats.displayTime}</p>
+                          </div>
+                          <div className="absolute -top-3 right-0">
+                            <span className="bg-slate-50 text-slate-500 text-[9px] font-black uppercase px-2 py-1 rounded-md border border-slate-100">{p.status}</span>
+                          </div>
+                        </div>
                       </div>
+                      <button onClick={(e) => { e.stopPropagation(); setDeletingProjectId(p.id); }} className="absolute top-4 right-4 p-2 text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all z-10"><Trash2 size={18} /></button>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); setDeletingProjectId(p.id); }} className="absolute top-4 right-4 p-2 text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all z-10"><Trash2 size={18} /></button>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         )}
@@ -408,9 +441,9 @@ export default function App() {
             <button onClick={() => setCurrentView('dashboard')} className="mb-6 text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition font-bold"><ChevronLeft size={20} /> Cancel</button>
             <h2 className="text-3xl font-black text-slate-800 mb-8">New Commission</h2>
             <form onSubmit={handleCreateProject} className="space-y-6">
-              <div><label className="block text-xs font-black uppercase text-slate-400 mb-2">Project Name</label><input name="name" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-bold" /></div>
-              <div><label className="block text-xs font-black uppercase text-slate-400 mb-2">Client</label><input name="client" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-bold" /></div>
-              <div><label className="block text-xs font-black uppercase text-slate-400 mb-2">Base Hourly Rate ($)</label><input name="rate" type="number" step="0.01" defaultValue="45.00" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-black" /></div>
+              <div><label className="block text-xs font-black uppercase text-slate-400 mb-2 tracking-widest">Project Name</label><input name="name" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-bold" /></div>
+              <div><label className="block text-xs font-black uppercase text-slate-400 mb-2 tracking-widest">Client</label><input name="client" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-bold" /></div>
+              <div><label className="block text-xs font-black uppercase text-slate-400 mb-2 tracking-widest">Base Hourly Rate ($)</label><input name="rate" type="number" step="0.01" defaultValue="45.00" required className="w-full p-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:bg-white focus:border-indigo-500 outline-none transition font-black" /></div>
               <button type="submit" disabled={syncingSheet} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-xl hover:bg-indigo-700 transition transform active:scale-95">Create Project</button>
             </form>
           </div>
@@ -418,20 +451,20 @@ export default function App() {
 
         {currentView === 'project_detail' && activeProject && (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center px-2">
               <button onClick={() => setCurrentView('dashboard')} className="text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition font-bold"><ChevronLeft size={20} /> Dashboard</button>
               <div className="flex gap-2">
                 {activeProject.spreadsheetId ? (
-                  <button onClick={() => window.open(`https://docs.google.com/spreadsheets/d/${activeProject.spreadsheetId}`, '_blank')} className="p-2 rounded-xl bg-white text-emerald-600 border border-slate-200 hover:bg-emerald-50 transition"><FileSpreadsheet size={20} /></button>
+                  <button onClick={() => window.open(`https://docs.google.com/spreadsheets/d/${activeProject.spreadsheetId}`, '_blank')} className="p-2 rounded-xl bg-white text-emerald-600 border border-slate-200 hover:bg-emerald-50 transition" title="Spreadsheet"><FileSpreadsheet size={20} /></button>
                 ) : (
-                  <button onClick={() => setShowLinkModal(true)} className="p-2 rounded-xl bg-white text-indigo-400 border border-slate-200 hover:text-indigo-600 transition"><LinkIcon size={20} /></button>
+                  <button onClick={() => setShowLinkModal(true)} className="p-2 rounded-xl bg-white text-indigo-400 border border-slate-200 hover:text-indigo-600 transition" title="Link Sheet"><LinkIcon size={20} /></button>
                 )}
-                <button onClick={() => setShowRateEditor(!showRateEditor)} className={`p-2 rounded-xl transition ${showRateEditor ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}><Settings2 size={20} /></button>
+                <button onClick={() => setShowRateEditor(!showRateEditor)} className={`p-2 rounded-xl transition ${showRateEditor ? 'bg-indigo-600 text-white border-transparent' : 'bg-white text-slate-400 border border-slate-200'}`} title="Task Rates"><Settings2 size={20} /></button>
               </div>
             </div>
 
             {showRateEditor && (
-              <div className="bg-white p-6 rounded-3xl shadow-md border-2 border-indigo-100">
+              <div className="bg-white p-6 rounded-3xl shadow-md border-2 border-indigo-100 mx-2">
                 <h3 className="font-black text-slate-800 mb-4 flex items-center gap-2"><DollarSign size={18} /> Task Rates</h3>
                 <div className="space-y-3">
                   {PHASES.map(ph => (
@@ -444,24 +477,24 @@ export default function App() {
               </div>
             )}
 
-            <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200 overflow-hidden relative">
+            <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200 overflow-hidden relative mx-2">
               <div className="relative z-10 flex flex-col gap-6">
                 <div><h2 className="text-3xl font-black text-slate-800">{activeProject.name}</h2><p className="text-slate-400 font-bold uppercase tracking-widest text-xs">{activeProject.client}</p></div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
-                  <div className="bg-emerald-500 p-4 rounded-2xl text-white shadow-lg shadow-emerald-200">
-                    <p className="text-[9px] font-black uppercase opacity-70">Total Value</p>
+                  <div className="bg-emerald-500 p-4 rounded-2xl text-white shadow-lg shadow-emerald-100">
+                    <p className="text-[9px] font-black uppercase opacity-70 tracking-widest">Total Value</p>
                     <p className="text-2xl font-black tracking-tighter">{getStats(timeLogs).totalValue}</p>
                   </div>
                   <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100">
-                    <p className="text-[9px] font-black uppercase text-indigo-400">Labor</p>
+                    <p className="text-[9px] font-black uppercase text-indigo-400 tracking-widest">Labor</p>
                     <p className="text-xl font-black text-indigo-700 tracking-tighter">{getStats(timeLogs).earned}</p>
                   </div>
                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                    <p className="text-[9px] font-black uppercase text-slate-400">Materials</p>
+                    <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Materials</p>
                     <p className="text-xl font-black text-slate-600 tracking-tighter">{getStats(timeLogs).materialCost}</p>
                   </div>
                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                    <p className="text-[9px] font-black uppercase text-slate-400">Time</p>
+                    <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Time</p>
                     <p className="text-xl font-black text-slate-600 tracking-tighter">{getStats(timeLogs).displayTime}</p>
                   </div>
                 </div>
@@ -469,12 +502,12 @@ export default function App() {
               <div className="absolute -top-4 -right-4 opacity-5 pointer-events-none"><SLSLogo className="w-48 h-48" /></div>
             </div>
 
-            <div className="bg-slate-900 text-white p-8 rounded-3xl shadow-2xl relative">
+            <div className="bg-slate-900 text-white p-8 rounded-3xl shadow-2xl relative mx-2">
               {activeTimer ? (
                 <div className="flex flex-col items-center text-center">
                   <div className="flex items-center gap-2 bg-indigo-500/20 text-indigo-300 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] mb-4 border border-indigo-500/30 animate-pulse">ACTIVE: {activeTimer.phase}</div>
                   <div className="text-7xl font-mono font-black mb-10 tabular-nums">{formatTime(elapsedTime)}</div>
-                  <button onClick={stopTimer} className="bg-rose-500 hover:bg-rose-600 p-4 w-full max-w-sm rounded-2xl font-black flex items-center justify-center gap-2"><Pause size={24} /> Stop</button>
+                  <button onClick={stopTimer} className="bg-rose-500 hover:bg-rose-600 p-4 w-full max-w-sm rounded-2xl font-black flex items-center justify-center gap-2 active:scale-95 transition"><Pause size={24} /> Stop</button>
                 </div>
               ) : (
                 <div className="space-y-4" ref={dropdownRef}>
@@ -487,12 +520,16 @@ export default function App() {
                     </div>
                     {showPhaseDropdown && (
                       <div className="absolute top-full left-0 right-0 mt-2 bg-slate-800 rounded-2xl overflow-hidden z-[50] shadow-2xl border border-white/10 max-h-64 overflow-y-auto">
-                        {filteredPhases.map(ph => (
-                          <button key={ph} onClick={() => startTimer(ph)} className="w-full p-4 text-left hover:bg-indigo-600 border-b border-white/5 last:border-0 flex flex-col group">
-                            <span className="text-[9px] font-black uppercase text-slate-500 group-hover:text-white/70">${activeProject.phaseRates?.[ph] ?? activeProject.hourlyRate}/hr</span>
-                            <span className="text-sm font-bold text-white">{ph}</span>
-                          </button>
-                        ))}
+                        {filteredPhases.length > 0 ? (
+                          filteredPhases.map(ph => (
+                            <button key={ph} onClick={() => startTimer(ph)} className="w-full p-4 text-left hover:bg-indigo-600 border-b border-white/5 last:border-0 flex flex-col group">
+                              <span className="text-[9px] font-black uppercase text-slate-500 group-hover:text-white/70">${activeProject.phaseRates?.[ph] ?? activeProject.hourlyRate}/hr</span>
+                              <span className="text-sm font-bold text-white">{ph}</span>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="p-4 text-slate-500 text-xs font-bold italic text-center uppercase tracking-widest">No matching tasks</div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -500,55 +537,82 @@ export default function App() {
               )}
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 px-2">
               <div className="flex bg-slate-200/50 p-1.5 rounded-2xl">
-                <button onClick={() => setDetailTab('history')} className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition ${detailTab === 'history' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Timeline</button>
-                <button onClick={() => setDetailTab('expenses')} className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition ${detailTab === 'expenses' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'}`}>Materials</button>
+                <button onClick={() => setDetailTab('history')} className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition ${detailTab === 'history' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:bg-white/30'}`}>Timeline</button>
+                <button onClick={() => setDetailTab('expenses')} className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition ${detailTab === 'expenses' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:bg-white/30'}`}>Materials</button>
               </div>
 
               {detailTab === 'history' ? (
                 <div className="space-y-4">
                   <div className="flex justify-between items-center px-2">
                     <h3 className="text-xl font-black text-slate-800">History</h3>
-                    <label className="text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl flex items-center gap-2 text-[10px] font-black uppercase cursor-pointer transition active:scale-95"><Camera size={16} /> Snap Progress<input type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(e)} /></label>
+                    <label className="text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl flex items-center gap-2 text-[10px] font-black uppercase cursor-pointer transition active:scale-95 border border-emerald-100"><Camera size={16} /> Snap Photo<input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} /></label>
                   </div>
-                  {timeLogs.filter(l => l.type !== 'expense').map(log => (
-                    <div key={log.id} className="bg-white p-6 rounded-3xl border border-slate-100 flex gap-6 items-start hover:border-indigo-100 transition">
-                      <div className={`p-3 rounded-2xl ${log.type === 'photo' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>{log.type === 'photo' ? <Camera size={24} /> : <Clock size={24} />}</div>
-                      <div className="flex-1">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-black text-slate-800 text-lg leading-tight">{log.phase}</p>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Syncing...'}</p>
-                          </div>
-                          {log.type === 'time' && (
-                            <div className="flex flex-col items-end shrink-0 ml-4">
-                              <div className="bg-slate-900 text-white px-3 py-1 rounded-full text-[10px] font-black">+{formatTime(log.duration)}</div>
-                              <div className="text-emerald-600 font-black text-sm flex items-center gap-1"><DollarSign size={12} />{calculateEarnedForLog(log, activeProject).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                  <div className="space-y-4">
+                    {timeLogs.filter(l => l.type !== 'expense').length > 0 ? (
+                      timeLogs.filter(l => l.type !== 'expense').map(log => {
+                        const earnedAmount = calculateEarnedForLog(log, activeProject);
+                        return (
+                          <div key={log.id} className="bg-white p-6 rounded-3xl border border-slate-100 flex gap-6 items-start hover:border-indigo-100 transition shadow-sm">
+                            <div className={`p-3 rounded-2xl shrink-0 ${log.type === 'photo' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>{log.type === 'photo' ? <Camera size={24} /> : <Clock size={24} />}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex justify-between items-start mb-2">
+                                <div className="min-w-0">
+                                  <p className="font-black text-slate-800 text-lg leading-tight truncate">{log.phase}</p>
+                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Saving...'}</p>
+                                </div>
+                                {log.type === 'time' && (
+                                  <div className="flex flex-col items-end shrink-0 ml-4">
+                                    <div className="bg-slate-900 text-white px-3 py-1 rounded-full text-[10px] font-black">+{formatTime(log.duration)}</div>
+                                    <div className="text-emerald-600 font-black text-sm flex items-center gap-1 mt-1"><DollarSign size={12} />{earnedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                                  </div>
+                                )}
+                              </div>
+                              {log.imageUrl && <div className="mt-4 rounded-2xl overflow-hidden border border-slate-100 shadow-inner bg-slate-50"><img src={log.imageUrl} className="w-full h-auto" alt="Progress" /></div>}
                             </div>
-                          )}
-                        </div>
-                        {log.imageUrl && <div className="mt-4 rounded-2xl overflow-hidden border border-slate-100 shadow-inner"><img src={log.imageUrl} className="w-full h-auto" /></div>}
-                      </div>
-                    </div>
-                  ))}
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="py-12 text-center text-slate-400 text-xs font-bold uppercase tracking-widest border-2 border-dashed border-slate-200 rounded-3xl">No entries in timeline</div>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-6">
                   <div className="bg-white p-6 rounded-3xl border border-emerald-100 shadow-sm">
-                    <h3 className="font-black text-slate-800 mb-4 flex items-center gap-2"><Tag size={16} className="text-emerald-500" /> Log Material Cost</h3>
+                    <h3 className="font-black text-slate-800 mb-4 flex items-center gap-2 tracking-tight"><Tag size={16} className="text-emerald-500" /> Log Material Cost</h3>
                     <form onSubmit={handleAddExpense} className="flex flex-col md:flex-row gap-3">
-                      <input name="itemName" required placeholder="Item name..." className="flex-[2] p-4 rounded-2xl bg-slate-50 font-bold border-2 border-transparent focus:border-emerald-500 outline-none transition" />
-                      <input name="amount" type="number" step="0.01" required placeholder="0.00" className="flex-1 p-4 rounded-2xl bg-slate-50 font-black border-2 border-transparent focus:border-emerald-500 outline-none transition" />
+                      <input name="itemName" required placeholder="Item (e.g. Blue Cathedral Glass)" className="flex-[2] p-4 rounded-2xl bg-slate-50 font-bold border-2 border-transparent focus:bg-white focus:border-emerald-500 outline-none transition min-w-0" />
+                      <div className="flex-1 relative min-w-0">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-400">$</span>
+                        <input name="amount" type="number" step="0.01" required placeholder="0.00" className="w-full p-4 pl-8 rounded-2xl bg-slate-50 font-black border-2 border-transparent focus:bg-white focus:border-emerald-500 outline-none transition" />
+                      </div>
                       <button type="submit" className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg hover:bg-emerald-700 transition active:scale-95">Add</button>
                     </form>
                   </div>
-                  {timeLogs.filter(l => l.type === 'expense').map(exp => (
-                    <div key={exp.id} className="bg-white p-5 rounded-3xl border border-slate-100 flex justify-between items-center group">
-                      <div className="flex items-center gap-4"><div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><Tag size={20} /></div><div><p className="font-black text-slate-800">{exp.itemName}</p><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{exp.timestamp ? new Date(exp.timestamp.seconds * 1000).toLocaleDateString() : 'Saving...'}</p></div></div>
-                      <div className="flex items-center gap-4"><p className="text-lg font-black text-emerald-600">${exp.amount.toFixed(2)}</p><button onClick={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'logs', exp.id))} className="text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16} /></button></div>
-                    </div>
-                  ))}
+                  <div className="space-y-3">
+                    {timeLogs.filter(l => l.type === 'expense').length > 0 ? (
+                      timeLogs.filter(l => l.type === 'expense').map(exp => (
+                        <div key={exp.id} className="bg-white p-5 rounded-3xl border border-slate-100 flex justify-between items-center group shadow-sm">
+                          <div className="flex items-center gap-4 min-w-0">
+                            <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><Tag size={20} /></div>
+                            <div className="min-w-0">
+                              <p className="font-black text-slate-800 truncate">{exp.itemName}</p>
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{exp.timestamp ? new Date(exp.timestamp.seconds * 1000).toLocaleDateString() : 'Saving...'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 shrink-0">
+                            <p className="text-lg font-black text-emerald-600">${exp.amount.toFixed(2)}</p>
+                            <button onClick={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'logs', exp.id))} className="text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16} /></button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="py-12 text-center text-slate-400 text-xs font-bold uppercase tracking-widest border-2 border-dashed border-slate-200 rounded-3xl">No materials logged</div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
