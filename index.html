@@ -15,13 +15,16 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
         body { font-family: 'Inter', sans-serif; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
+        /* Style for the searchable dropdown results */
+        .dropdown-shadow { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
     </style>
 </head>
 <body class="bg-slate-50">
     <div id="root"></div>
 
+    <!-- Added data-type="module" to fix the "require is not defined" error -->
     <script type="text/babel" data-type="module">
-        // --- 1. FIREBASE IMPORTS ---
+        // --- 1. FIREBASE IMPORTS (Must be at the top) ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
@@ -47,15 +50,23 @@
         const db = getFirestore(app);
         const appId = 'sls-time-production';
 
+        // Updated PHASES list: Alphabetical and comprehensive
         const PHASES = [
-            "Design & Patterning",
-            "Glass Selection & Cutting",
-            "Grinding & Fitting",
-            "Copper Foiling",
+            "Cementing and waterproofing",
+            "Cleaning & patina",
+            "Copper foiling",
+            "Cutting",
+            "Design and patterning",
+            "Framing & installation",
+            "Glass selection",
+            "Grinding & fitting",
+            "Lead",
+            "Line work",
+            "Research",
+            "Sketching",
             "Soldering",
-            "Cleaning & Patina",
-            "Framing & Installation"
-        ];
+            "Watercolor"
+        ].sort();
 
         // --- COMPONENTS ---
         const SLSLogo = ({ className = "w-8 h-8" }) => (
@@ -76,6 +87,12 @@
             const icons = {
                 clock: <path d="M12 6v6l4 2" />,
                 plus: <path d="M12 5v14M5 12h14" />,
+                search: (
+                    <React.Fragment>
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="m21 21-4.3-4.3"/>
+                    </React.Fragment>
+                ),
                 camera: (
                     <React.Fragment>
                         <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
@@ -113,7 +130,8 @@
                     </React.Fragment>
                 ),
                 link: <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />,
-                dollar: <path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                dollar: <path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />,
+                chevronDown: <path d="m6 9 6 6 6-6"/>
             };
             return (
                 <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -136,7 +154,24 @@
             const [elapsedTime, setElapsedTime] = useState(0);
             const [deletingProjectId, setDeletingProjectId] = useState(null);
             const [showLinkModal, setShowLinkModal] = useState(false);
+            
+            // Search/Dropdown State
+            const [phaseSearch, setPhaseSearch] = useState("");
+            const [showPhaseDropdown, setShowPhaseDropdown] = useState(false);
+            
             const timerRef = useRef(null);
+            const dropdownRef = useRef(null);
+
+            // Close dropdown when clicking outside
+            useEffect(() => {
+                const handleClickOutside = (event) => {
+                    if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                        setShowPhaseDropdown(false);
+                    }
+                };
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => document.removeEventListener("mousedown", handleClickOutside);
+            }, []);
 
             useEffect(() => {
                 const initAuth = async () => {
@@ -236,7 +271,7 @@
                         sheetId = result.spreadsheetId;
                     }
                 } catch (err) {
-                    console.warn("Sheet request sent, but could not read the ID automatically due to CORS.");
+                    console.warn("Sheet request sent, but could not read the ID automatically.");
                 }
 
                 const newProject = {
@@ -274,6 +309,8 @@
 
             const startTimer = (phase) => {
                 setActiveTimer({ startTime: Date.now(), phase, projectId: activeProject.id });
+                setShowPhaseDropdown(false);
+                setPhaseSearch("");
             };
 
             const stopTimer = async () => {
@@ -283,7 +320,6 @@
                 const rate = activeProject.phaseRates?.[phase] ?? activeProject.hourlyRate;
                 const earned = (durationSeconds / 3600) * rate;
 
-                // 1. Save to Firestore
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), {
                     projectId: activeTimer.projectId,
                     phase,
@@ -292,10 +328,8 @@
                     type: 'time'
                 });
 
-                // 2. Trigger Google Sheet log if a Spreadsheet is linked
                 if (activeProject.spreadsheetId) {
                     try {
-                        console.log("Pushing log to Google Sheet:", activeProject.spreadsheetId);
                         fetch(GOOGLE_SCRIPT_URL, {
                             method: "POST",
                             headers: { "Content-Type": "text/plain" },
@@ -305,10 +339,10 @@
                                 phase,
                                 durationSeconds,
                                 displayTime: formatTime(durationSeconds),
-                                rate: rate,
+                                rate,
                                 earned: Number(earned.toFixed(2))
                             }),
-                            mode: "no-cors" 
+                            mode: "no-cors"
                         });
                     } catch (err) { console.error("Sheet log failed:", err); }
                 }
@@ -367,14 +401,17 @@
                 </div>
             );
 
+            // Filtered phases for the searchable dropdown
+            const filteredPhases = PHASES.filter(p => 
+                p.toLowerCase().includes(phaseSearch.toLowerCase())
+            );
+
             return (
                 <div className="min-h-screen pb-20">
-                    {/* Manual Link Modal */}
                     {showLinkModal && (
                         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full">
                                 <h3 className="text-xl font-black text-slate-800 mb-2">Link Google Sheet</h3>
-                                <p className="text-slate-500 text-xs mb-4">If the sheet was created but the app couldn't find it, paste the ID from the sheet's URL here.</p>
                                 <form onSubmit={linkSheetManually} className="space-y-4">
                                     <input name="sheetId" placeholder="Paste Sheet ID here..." required className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
                                     <div className="flex gap-2">
@@ -419,25 +456,36 @@
                                     {projects.length === 0 ? (
                                         <div className="col-span-full py-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center gap-4">
                                             <SLSLogo className="w-16 h-16 opacity-20 grayscale" />
-                                            <p className="text-slate-400 font-medium">No projects yet.</p>
+                                            <p className="text-slate-400 font-medium font-bold uppercase tracking-tight text-xs">No active pieces</p>
                                         </div>
                                     ) : (
                                         projects.map(p => {
                                             const stats = getStats(timeLogs.filter(l => l.projectId === p.id), p);
                                             return (
                                                 <div key={p.id} className="relative group">
-                                                    <div onClick={() => { setActiveProject(p); setCurrentView('project_detail'); }} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 cursor-pointer hover:border-indigo-200 transition-all active:bg-indigo-50">
-                                                        <div className="flex justify-between items-start mb-4">
+                                                    <div onClick={() => { setActiveProject(p); setCurrentView('project_detail'); }} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 cursor-pointer hover:border-indigo-200 transition-all active:bg-indigo-50 flex flex-col h-full">
+                                                        <div className="mb-1">
                                                             <h3 className="font-black text-xl text-slate-800 group-hover:text-indigo-600 pr-8 truncate">{p.name}</h3>
-                                                            <span className="bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase px-2 py-1 rounded-lg shrink-0">{p.status}</span>
                                                         </div>
-                                                        <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-6 truncate">{p.client}</p>
-                                                        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-50">
-                                                            <div><p className="text-[10px] font-bold text-slate-400 uppercase">Time</p><p className="font-black text-slate-700 flex items-center gap-1"><Icon name="clock" size={14} className="text-indigo-500" /> {stats.displayTime}</p></div>
-                                                            <div><p className="text-[10px] font-bold text-slate-400 uppercase">Earned</p><p className="font-black text-emerald-600 flex items-center gap-1"><Icon name="wallet" size={14} /> {stats.earned}</p></div>
+                                                        <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-8 truncate">{p.client}</p>
+                                                        
+                                                        <div className="mt-auto grid grid-cols-2 gap-4 pt-4 border-t border-slate-50 relative">
+                                                            <div>
+                                                                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Time</p>
+                                                                <p className="font-black text-slate-700 flex items-center gap-1 text-sm"><Icon name="clock" size={14} className="text-indigo-500" /> {stats.displayTime}</p>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Earned</p>
+                                                                <p className="font-black text-emerald-600 flex items-center gap-1 text-sm"><Icon name="wallet" size={14} /> {stats.earned}</p>
+                                                            </div>
+                                                            
+                                                            {/* Status Relocated to the bottom corner for clarity */}
+                                                            <div className="absolute -top-3 right-0">
+                                                                <span className="bg-slate-50 text-slate-500 text-[9px] font-black uppercase px-2 py-1 rounded-md border border-slate-100 shrink-0">{p.status}</span>
+                                                            </div>
                                                         </div>
                                                     </div>
-                                                    <button onClick={(e) => { e.stopPropagation(); setDeletingProjectId(p.id); }} className="absolute top-4 right-4 p-2 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"><Icon name="trash" size={18} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setDeletingProjectId(p.id); }} className="absolute top-4 right-4 p-2 text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all z-10" title="Delete Project"><Icon name="trash" size={18} /></button>
                                                 </div>
                                             );
                                         })
@@ -524,13 +572,49 @@
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                            {PHASES.map(ph => (
-                                                <button key={ph} onClick={() => startTimer(ph)} className="bg-white/5 hover:bg-indigo-600 p-4 rounded-2xl text-left transition border border-white/10 group flex flex-col gap-1">
-                                                    <span className="text-[10px] font-black uppercase tracking-tighter text-slate-500 group-hover:text-white/70">${activeProject.phaseRates?.[ph] ?? activeProject.hourlyRate}/hr</span>
-                                                    <span className="text-xs font-black uppercase tracking-tight group-hover:text-white">{ph}</span>
-                                                </button>
-                                            ))}
+                                        <div className="space-y-4">
+                                            <div className="flex flex-col gap-2">
+                                                <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest">Select a Task to Start Timer</h3>
+                                                <div className="relative w-full" ref={dropdownRef}>
+                                                    <div 
+                                                        className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center gap-3 focus-within:bg-white/10 transition group cursor-text"
+                                                        onClick={() => setShowPhaseDropdown(true)}
+                                                    >
+                                                        <Icon name="search" size={20} className="text-slate-500 group-focus-within:text-white transition" />
+                                                        <input 
+                                                            type="text"
+                                                            placeholder="Type or select a task..."
+                                                            className="bg-transparent border-none outline-none w-full text-white font-bold placeholder:text-slate-600"
+                                                            value={phaseSearch}
+                                                            onChange={(e) => {
+                                                                setPhaseSearch(e.target.value);
+                                                                setShowPhaseDropdown(true);
+                                                            }}
+                                                            onFocus={() => setShowPhaseDropdown(true)}
+                                                        />
+                                                        <Icon name="chevronDown" size={20} className={`text-slate-500 transition-transform ${showPhaseDropdown ? 'rotate-180' : ''}`} />
+                                                    </div>
+
+                                                    {showPhaseDropdown && (
+                                                        <div className="absolute top-full left-0 right-0 mt-2 bg-slate-800 rounded-2xl overflow-hidden z-[50] dropdown-shadow border border-white/10 max-h-64 overflow-y-auto">
+                                                            {filteredPhases.length === 0 ? (
+                                                                <div className="p-4 text-slate-500 text-sm font-bold italic text-center">No matching tasks found</div>
+                                                            ) : (
+                                                                filteredPhases.map(ph => (
+                                                                    <button 
+                                                                        key={ph}
+                                                                        onClick={() => startTimer(ph)}
+                                                                        className="w-full p-4 text-left hover:bg-indigo-600 transition flex flex-col gap-0.5 group"
+                                                                    >
+                                                                        <span className="text-[10px] font-black uppercase tracking-tighter text-slate-500 group-hover:text-white/70">${activeProject.phaseRates?.[ph] ?? activeProject.hourlyRate}/hr</span>
+                                                                        <span className="text-sm font-bold text-white leading-none">{ph}</span>
+                                                                    </button>
+                                                                ))
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
                                         </div>
                                     )}
                                 </div>
@@ -538,13 +622,13 @@
                                 <div className="space-y-4">
                                     <div className="flex justify-between items-center px-2">
                                         <h3 className="text-xl font-black text-slate-800">History</h3>
-                                        {!activeTimer && <label className="text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-black uppercase cursor-pointer hover:bg-emerald-100 transition border border-emerald-100"><Icon name="camera" size={16} /> Add Photo<input type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(e, "Snapshot")} /></label>}
+                                        {!activeTimer && <label className="text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-black uppercase cursor-pointer hover:bg-emerald-100 transition border border-emerald-100 font-black"><Icon name="camera" size={16} /> Add Photo<input type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(e, "Snapshot")} /></label>}
                                     </div>
                                     <div className="space-y-4">
                                         {timeLogs.map(log => {
                                             const earnedAmount = calculateEarnedForLog(log, activeProject);
                                             return (
-                                                <div key={log.id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex gap-6 items-start">
+                                                <div key={log.id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex gap-6 items-start hover:border-indigo-100 transition">
                                                     <div className={`p-3 rounded-2xl shrink-0 ${log.type === 'photo' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}><Icon name={log.type === 'photo' ? 'camera' : 'clock'} size={24} /></div>
                                                     <div className="flex-1">
                                                         <div className="flex justify-between items-start mb-2">
@@ -586,4 +670,3 @@
     </script>
 </body>
 </html>
-
