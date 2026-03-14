@@ -318,6 +318,12 @@ export default function App() {
     });
   };
 
+  const calculateEarnedForLog = (log, proj) => {
+    if (log.type !== 'time' || !proj) return 0;
+    const rate = proj.phaseRates?.[log.phase] ?? proj.hourlyRate ?? 0;
+    return (log.duration / 3600) * rate;
+  };
+
   if (loading) return (
     <div className="flex flex-col items-center justify-center h-screen bg-indigo-50 gap-4">
       <SLSLogo className="w-24 h-24 animate-pulse" />
@@ -384,8 +390,8 @@ export default function App() {
                       <h3 className="font-black text-xl text-slate-800 pr-8 truncate mb-1">{p.name}</h3>
                       <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-8">{p.client}</p>
                       <div className="mt-auto grid grid-cols-2 gap-4 pt-4 border-t border-slate-50 relative">
-                        <div><p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Project Value</p><p className="font-black text-emerald-600 flex items-center gap-1 text-sm"><Wallet size={14} /> {pStats.totalValue}</p></div>
-                        <div><p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Time Tracked</p><p className="font-black text-slate-700 flex items-center gap-1 text-sm"><Clock size={14} className="text-indigo-500" /> {pStats.displayTime}</p></div>
+                        <div><p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Value</p><p className="font-black text-emerald-600 flex items-center gap-1 text-sm"><Wallet size={14} /> {pStats.totalValue}</p></div>
+                        <div><p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">Time</p><p className="font-black text-slate-700 flex items-center gap-1 text-sm"><Clock size={14} className="text-indigo-500" /> {pStats.displayTime}</p></div>
                         <div className="absolute -top-3 right-0"><span className="bg-slate-50 text-slate-500 text-[9px] font-black uppercase px-2 py-1 rounded-md border border-slate-100">{p.status}</span></div>
                       </div>
                     </div>
@@ -460,6 +466,7 @@ export default function App() {
                   </div>
                 </div>
               </div>
+              <div className="absolute -top-4 -right-4 opacity-5 pointer-events-none"><SLSLogo className="w-48 h-48" /></div>
             </div>
 
             <div className="bg-slate-900 text-white p-8 rounded-3xl shadow-2xl relative">
@@ -471,15 +478,15 @@ export default function App() {
                 </div>
               ) : (
                 <div className="space-y-4" ref={dropdownRef}>
-                  <h3 className="text-[10px] font-black uppercase text-slate-500 tracking-widest text-center">Start a New Task</h3>
+                  <h3 className="text-[10px] font-black uppercase text-slate-500 tracking-widest text-center">Start Recording Time</h3>
                   <div className="relative w-full max-w-md mx-auto">
-                    <div onClick={() => setShowPhaseDropdown(true)} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center gap-3">
+                    <div onClick={() => setShowPhaseDropdown(true)} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center gap-3 cursor-text">
                       <Search size={20} className="text-slate-500" />
-                      <input type="text" placeholder="Which task are you starting?" className="bg-transparent border-none outline-none w-full text-white font-bold" value={phaseSearch} onChange={(e) => { setPhaseSearch(e.target.value); setShowPhaseDropdown(true); }} onFocus={() => setShowPhaseDropdown(true)} />
+                      <input type="text" placeholder="Which task are you starting?" className="bg-transparent border-none outline-none w-full text-white font-bold placeholder:text-slate-600" value={phaseSearch} onChange={(e) => { setPhaseSearch(e.target.value); setShowPhaseDropdown(true); }} onFocus={() => setShowPhaseDropdown(true)} />
                       <ChevronDown size={20} className={`text-slate-500 transition-transform ${showPhaseDropdown ? 'rotate-180' : ''}`} />
                     </div>
                     {showPhaseDropdown && (
-                      <div className="absolute top-full left-0 right-0 mt-2 bg-slate-800 rounded-2xl overflow-hidden z-[50] dropdown-shadow border border-white/10 max-h-64 overflow-y-auto">
+                      <div className="absolute top-full left-0 right-0 mt-2 bg-slate-800 rounded-2xl overflow-hidden z-[50] shadow-2xl border border-white/10 max-h-64 overflow-y-auto">
                         {filteredPhases.map(ph => (
                           <button key={ph} onClick={() => startTimer(ph)} className="w-full p-4 text-left hover:bg-indigo-600 border-b border-white/5 last:border-0 flex flex-col group">
                             <span className="text-[9px] font-black uppercase text-slate-500 group-hover:text-white/70">${activeProject.phaseRates?.[ph] ?? activeProject.hourlyRate}/hr</span>
@@ -495,8 +502,8 @@ export default function App() {
 
             <div className="space-y-4">
               <div className="flex bg-slate-200/50 p-1.5 rounded-2xl">
-                <button onClick={() => setDetailTab('history')} className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest ${detailTab === 'history' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Timeline</button>
-                <button onClick={() => setDetailTab('expenses')} className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest ${detailTab === 'expenses' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'}`}>Materials</button>
+                <button onClick={() => setDetailTab('history')} className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition ${detailTab === 'history' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Timeline</button>
+                <button onClick={() => setDetailTab('expenses')} className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition ${detailTab === 'expenses' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'}`}>Materials</button>
               </div>
 
               {detailTab === 'history' ? (
@@ -506,7 +513,7 @@ export default function App() {
                     <label className="text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl flex items-center gap-2 text-[10px] font-black uppercase cursor-pointer transition active:scale-95"><Camera size={16} /> Snap Progress<input type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(e)} /></label>
                   </div>
                   {timeLogs.filter(l => l.type !== 'expense').map(log => (
-                    <div key={log.id} className="bg-white p-6 rounded-3xl border border-slate-100 flex gap-6 items-start">
+                    <div key={log.id} className="bg-white p-6 rounded-3xl border border-slate-100 flex gap-6 items-start hover:border-indigo-100 transition">
                       <div className={`p-3 rounded-2xl ${log.type === 'photo' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>{log.type === 'photo' ? <Camera size={24} /> : <Clock size={24} />}</div>
                       <div className="flex-1">
                         <div className="flex justify-between items-start">
@@ -521,7 +528,7 @@ export default function App() {
                             </div>
                           )}
                         </div>
-                        {log.imageUrl && <div className="mt-4 rounded-2xl overflow-hidden border border-slate-100"><img src={log.imageUrl} className="w-full h-auto" /></div>}
+                        {log.imageUrl && <div className="mt-4 rounded-2xl overflow-hidden border border-slate-100 shadow-inner"><img src={log.imageUrl} className="w-full h-auto" /></div>}
                       </div>
                     </div>
                   ))}
@@ -531,14 +538,14 @@ export default function App() {
                   <div className="bg-white p-6 rounded-3xl border border-emerald-100 shadow-sm">
                     <h3 className="font-black text-slate-800 mb-4 flex items-center gap-2"><Tag size={16} className="text-emerald-500" /> Log Material Cost</h3>
                     <form onSubmit={handleAddExpense} className="flex flex-col md:flex-row gap-3">
-                      <input name="itemName" required placeholder="Item name..." className="flex-[2] p-4 rounded-2xl bg-slate-50 font-bold" />
-                      <input name="amount" type="number" step="0.01" required placeholder="0.00" className="flex-1 p-4 rounded-2xl bg-slate-50 font-black" />
-                      <button type="submit" className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black">Add</button>
+                      <input name="itemName" required placeholder="Item name..." className="flex-[2] p-4 rounded-2xl bg-slate-50 font-bold border-2 border-transparent focus:border-emerald-500 outline-none transition" />
+                      <input name="amount" type="number" step="0.01" required placeholder="0.00" className="flex-1 p-4 rounded-2xl bg-slate-50 font-black border-2 border-transparent focus:border-emerald-500 outline-none transition" />
+                      <button type="submit" className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg hover:bg-emerald-700 transition active:scale-95">Add</button>
                     </form>
                   </div>
                   {timeLogs.filter(l => l.type === 'expense').map(exp => (
                     <div key={exp.id} className="bg-white p-5 rounded-3xl border border-slate-100 flex justify-between items-center group">
-                      <div className="flex items-center gap-4"><div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><Tag size={20} /></div><div><p className="font-black text-slate-800">{exp.itemName}</p></div></div>
+                      <div className="flex items-center gap-4"><div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><Tag size={20} /></div><div><p className="font-black text-slate-800">{exp.itemName}</p><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{exp.timestamp ? new Date(exp.timestamp.seconds * 1000).toLocaleDateString() : 'Saving...'}</p></div></div>
                       <div className="flex items-center gap-4"><p className="text-lg font-black text-emerald-600">${exp.amount.toFixed(2)}</p><button onClick={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'logs', exp.id))} className="text-slate-200 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16} /></button></div>
                     </div>
                   ))}
